@@ -1,0 +1,129 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "CloudFormation Template to trigger a Lambda function on S3 file upload.",
+    "Parameters": {
+      "BucketName": {
+        "Type": "String",
+        "Description": "Name of the S3 bucket where files will be uploaded.",
+        "Default": "codewithakshay-s3-sqs-event"
+      },
+      "SqsName": {
+        "Type": "String",
+        "Description": "Name of the SQS to handle events produced by s3 bucket for file upload.",
+        "Default": "s3-events-queue"
+      }
+    },
+    "Resources": {
+      "S3EventSQSQueue": {
+        "Type": "AWS::SQS::Queue",
+        "Properties": {
+          "QueueName": {
+            "Ref": "SqsName"
+          },
+          "MessageRetentionPeriod": 3600,
+          "VisibilityTimeout": 60
+        }
+      },
+      "SQSPermissionToS3Bucket": {
+        "DependsOn": "S3EventSQSQueue",
+        "Type": "AWS::SQS::QueuePolicy",
+        "Properties": {
+          "Queues": [
+            {
+              "Ref": "S3EventSQSQueue"
+            }
+          ],
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "AllowS3ToSendMessage",
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "s3.amazonaws.com"
+                },
+                "Action": "SQS:SendMessage",
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "S3EventSQSQueue",
+                    "Arn"
+                  ]
+                },
+                "Condition": {
+                  "ArnLike": {
+                    "aws:SourceArn": {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:aws:s3:*:*:",
+                          {
+                            "Ref": "BucketName"
+                          }
+                        ]
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "S3Bucket": {
+        "Type": "AWS::S3::Bucket",
+        "DependsOn": "SQSPermissionToS3Bucket",
+        "Properties": {
+          "BucketName": {
+            "Ref": "BucketName"
+          },
+          "NotificationConfiguration": {
+            "QueueConfigurations": [
+              {
+                "Event": "s3:ObjectCreated:*",
+                "Queue": {
+                  "Fn::GetAtt": [
+                    "S3EventSQSQueue",
+                    "Arn"
+                  ]
+                },
+                "Filter": {
+                  "S3Key": {
+                    "Rules": [
+                      {
+                        "Name": "prefix",
+                        "Value": "images/"
+                      },
+                      {
+                        "Name": "suffix",
+                        "Value": ".jpg"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "Outputs": {
+      "S3BucketName": {
+        "Description": "Name of the S3 bucket",
+        "Value": {
+          "Ref": "S3Bucket"
+        }
+      },
+      "SQSQueueArn": {
+        "Description": "ARN of the SQS Queue",
+        "Value": {
+          "Fn::GetAtt": [
+            "S3EventSQSQueue",
+            "Arn"
+          ]
+        },
+        "Export" : {
+            "Name" : {"Fn::Sub": "${SqsName}-SQS" }
+        }
+      }
+    }
+  }
